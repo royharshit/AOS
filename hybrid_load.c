@@ -12,6 +12,7 @@
 #include <sys/auxv.h>  // for getauxval
 #include <assert.h>
 #include <signal.h>
+#include <time.h>
 
 #define PAGE_SIZE 4096
 #define STACK_SIZE 0x20000 
@@ -58,8 +59,8 @@ void segfault_handler(int signum, siginfo_t *info, void *context) {
 
     size_t page_start = (size_t)fault_addr & ~(PAGE_SIZE - 1);
 
-    void *mapped_page = mmap((void *)page_start, 2*PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
-                             MAP_PRIVATE | MAP_FIXED, fd, page_start - segment_vaddr + segment_offset);
+    void *mapped_page = mmap((void *)page_start-PAGE_SIZE, 2*PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
+                             MAP_PRIVATE | MAP_FIXED, fd, page_start-PAGE_SIZE- segment_vaddr + segment_offset);
 
     if (mapped_page == MAP_FAILED) {
         perror("mmap");
@@ -269,7 +270,8 @@ int load_elf(const char *filename, int argc, char *argv[], char *envp[]) {
             printf("Copying from %p, size %ld\n",elf_base + phdr[i].p_offset, phdr[i].p_filesz);
             memcpy(segment, (char *)elf_base + phdr[i].p_offset, phdr[i].p_filesz);
 
-            if (segment_size > phdr[i].p_filesz) {
+            if (phdr[i].p_memsz > phdr[i].p_filesz) {
+                printf("Size of the BSS section %ld\n", phdr[i].p_memsz - phdr[i].p_filesz);
                 memset((char *)segment + phdr[i].p_filesz, 0, segment_size - phdr[i].p_filesz);
                 segment_offset = phdr[i].p_offset;
                 segment_vaddr = phdr[i].p_vaddr;
@@ -310,10 +312,14 @@ int load_elf(const char *filename, int argc, char *argv[], char *envp[]) {
     asm volatile ("mov %%rsp, %0" : "=r"(stack_pointer) : : "memory");
     asm volatile("mov %0, %%rsp\n" :: "r"(stack_top) :);
     asm volatile("mov %0, %%rax\n" :: "r"((long)0x0) : "rax");
-    asm volatile ("movabs $0x60006e5, %%rax\n" "call *%%rax\n" ::: "rax", "memory");
-    asm volatile("mov %0, %%rsp\n" :: "r"(stack_pointer) :);
-    
-    printf("Executed Successfully");
+
+    clock_t start, end;
+    start = clock();
+    asm volatile ("movabs $0x60005c0, %%rax\n" "call *%%rax\n" ::: "rax", "memory");
+    end = clock();
+    double cpu_time_used = ((double)(end - start)) / CLOCKS_PER_SEC;
+    asm volatile("mov %0, %%rsp\n" :: "r"(stack_pointer) :);    
+    printf("Execution time: %f seconds\n", cpu_time_used);
     return 0;
 
 }
